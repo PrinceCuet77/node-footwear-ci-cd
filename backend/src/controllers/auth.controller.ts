@@ -3,18 +3,18 @@ import { Request, Response, NextFunction } from 'express';
 import * as AuthService from '@services/auth.service';
 import { STATUS_CODE } from '@constants/statusCode';
 
-export async function register(
+export const register = async (
   req: Request,
   res: Response,
   next: NextFunction,
-) {
+) => {
   try {
     const { email, password } = req.body as {
       email: string;
       password: string;
     };
 
-    const user = await AuthService.findExistingUser(email);
+    const user = await AuthService.findExistingUserByEmail(email);
 
     if (user) {
       return sendResponse(
@@ -43,4 +43,51 @@ export async function register(
   } catch (error) {
     next(error);
   }
-}
+};
+
+export const login = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const { email, password } = req.body as {
+      email: string;
+      password: string;
+    };
+
+    const user = await AuthService.authenticateUser(email, password);
+    if (!user) {
+      return sendResponse(
+        res,
+        'Invalid credentials!',
+        STATUS_CODE.UNAUTHORIZED,
+      );
+    }
+
+    const { accessToken, refreshToken } = await AuthService.generateTokens(
+      user.id,
+      user.email,
+      user.role,
+    );
+
+    res.cookie(
+      'refresh_token',
+      refreshToken,
+      AuthService.getRefreshTokenCookieOptions(),
+    );
+
+    return sendResponse(res, 'Login is successful', STATUS_CODE.OK, {
+      id: user.id,
+      email: user.email,
+      name: `${user?.firstName || ''} ${user?.lastName || ''}`.trim(),
+      avatarUrl: user.avatarUrl,
+      role: user.role,
+      accessToken,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
