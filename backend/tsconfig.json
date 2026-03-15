@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "baseUrl": "./src",
+    "paths": {
+      "@validators/*": ["validators/*"],
+      "@middlewares/*": ["middlewares/*"],
+      "@utils/*": ["utils/*"],
+      "@constants/*": ["constants/*"],
+      "@config/*": ["config/*"],
+      "@controllers/*": ["controllers/*"],
+      "@repositories/*": ["repositories/*"],
+      "@routes/*": ["routes/*"],
+      "@services/*": ["services/*"],
+      "@interfaces/*": ["interfaces/*"],
+      "@src/*": ["*"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "prisma"]
+}
