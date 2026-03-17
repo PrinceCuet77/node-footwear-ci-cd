@@ -26,7 +26,15 @@ export const loginSchema = z.object({
   password: z
     .string({ required_error: 'Password is required' })
     .min(6, 'Password must be at least 6 characters')
-    .max(32, { message: 'Password must be at most 32 characters long' })
+    .max(32, { message: 'Password must be at most 32 characters long' }),
+});
+
+export const refreshTokenSchema = z.object({
+  accessToken: z.string().min(1),
+});
+
+export const logoutSchema = z.object({
+  accessToken: z.string().min(1),
 });
 
 export type RegisterInput = z.infer<typeof registerSchema>;

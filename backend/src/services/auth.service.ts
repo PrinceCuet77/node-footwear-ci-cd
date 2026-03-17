@@ -1,4 +1,5 @@
 import * as AuthRepository from '@repositories/auth.repository';
+import { TokenPayload } from '@src/interface/token.type';
 import * as bcrypt from 'bcrypt';
 import { type CookieOptions } from 'express';
 import jwt, { type Secret, type SignOptions } from 'jsonwebtoken';
@@ -62,13 +63,22 @@ export const generateTokens = async (
 export const getRefreshTokenCookieOptions = (
   isLogout = false,
 ): CookieOptions => {
-  const options: CookieOptions = {
+  if (isLogout) {
+    return {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'strict' as const,
+      maxAge: 0,
+    };
+  }
+  return {
     httpOnly: true,
     secure: true,
     sameSite: 'strict' as const,
+    maxAge: REFRESH_TOKEN_COOKIE_MAX_AGE,
   };
-  if (!isLogout) {
-    options.maxAge = REFRESH_TOKEN_COOKIE_MAX_AGE;
-  }
-  return options;
+};
+
+export const verifyRefreshToken = async (refreshToken: string) => {
+  return jwt.verify(refreshToken, REFRESH_TOKEN_SECRET) as TokenPayload;
 };

@@ -1,18 +1,17 @@
 import { Router } from 'express';
 import {
+  getNewRefreshToken,
   login,
+  logout,
   register,
-  //   login,
-  //   refreshToken,
-  //   logout,l
-  //   forgotPassword,
-  //   verifyToken,
-  //   resetPassword,
-  //   microsoftLogin,
-  //   changePassword,
 } from '@controllers/auth.controller';
+import { verifyToken } from '@middlewares/auth.middleware';
 import { validate } from '@middlewares/zodValidate';
-import { loginSchema, registerSchema } from '@validators/auth.validator';
+import {
+  loginSchema,
+  refreshTokenSchema,
+  registerSchema,
+} from '@validators/auth.validator';
 import { authRateLimiter } from '@middlewares/rateLimiter.middleware';
 // import { requireLogin } from '@middlewares/auth.middleware';
 
@@ -20,7 +19,6 @@ const router = Router();
 
 router.post('/register', validate(registerSchema), register);
 router.post('/login', authRateLimiter, validate(loginSchema), login);
-// router.post('/login', authRateLimiter, validate(loginSchema), login);
 // router.post(
 //   '/forgot-password',
 //   authRateLimiter,
@@ -45,10 +43,14 @@ router.post('/login', authRateLimiter, validate(loginSchema), login);
 //   validate(microsoftLoginSchema),
 //   microsoftLogin,
 // );
-// router.post('/refresh', validate(refreshSchema, 'cookies'), refreshToken);
+router.post(
+  '/refresh',
+  validate(refreshTokenSchema, 'cookies'),
+  getNewRefreshToken,
+);
 
-// router.use(requireLogin);
-// router.post('/logout', validate(logoutSchema, 'cookies'), logout);
+router.use(verifyToken);
+router.get('/logout', logout);
 // router.post('/change-password', validate(changePasswordSchema), changePassword);
 
 export default router;

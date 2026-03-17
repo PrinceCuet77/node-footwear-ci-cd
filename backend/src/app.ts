@@ -1,5 +1,6 @@
 import express, { Response } from 'express';
-// import userRoutes from '@routes/user.route';
+import userRoutes from '@routes/user.route';
+import adminRoutes from '@routes/admin.route';
 import authRoutes from '@routes/auth.route';
 
 import cors from 'cors';
@@ -40,7 +41,8 @@ app.get('/api/health', (req, res: Response) => {
   });
 });
 
-// app.use('/api/users', userRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/auth', authRoutes);
 
 app.use(errorHandler);
