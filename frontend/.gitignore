@@ -1,0 +1,57 @@
+# Dependencies
+/node_modules
+/jspm_packages
+
+# Build artifacts
+/build
+/dist
+/public/build
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Local history for editors/IDEs
+.history
+.vscode
+.idea
+*.iml
+
+# Optional caches
+.npm
+.yarn-cache
+.pnpm-cache
+.eslintcache
+.cache
+.next      # For Next.js projects
+.parcel-cache
+.docusaurus
+
+# OS-specific files
+.DS_Store
+*.seed
+*.stackdump
+
+# Testing coverage
+coverage
+.nyc_output
+
+package-lock.json

@@ -4,12 +4,12 @@
   "main": "app.js",
   "type": "module",
   "scripts": {
-    "start": "node dist/server.js",
+    "start": "tsx -r tsconfig-paths/register src/server.ts",
     "dev": "nodemon",
     "dev:fast": "ts-node-dev --respawn -r tsconfig-paths/register src/server.ts",
     "clean": "rimraf dist",
     "build:local": "npm run clean && npm run lint && tsc && tsc-alias",
-    "build": "npm run clean && npm run generate && tsc && tsc-alias && npm run migrate:deploy && npm run seed && npm run copy-static",
+    "build": "npm run clean && npm run generate && tsc && tsc-alias && npm run migrate:deploy",
     "format": "prettier --write .",
     "check": "prettier --check .",
     "lint": "eslint .",
@@ -17,7 +17,8 @@
     "migrate": "prisma migrate dev --name init && npm run generate",
     "migrate:deploy": "prisma migrate deploy",
     "generate": "prisma generate",
-    "studio": "prisma studio"
+    "studio": "prisma studio",
+    "seed": "tsx prisma/seed.ts"
   },
   "keywords": [],
   "author": "",

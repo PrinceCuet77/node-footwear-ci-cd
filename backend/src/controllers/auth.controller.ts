@@ -71,6 +71,8 @@ export const login = async (
       user.role,
     );
 
+    const isProduction = process.env.NODE_ENV === 'production';
+
     res.cookie(
       'refresh_token',
       refreshToken,
@@ -84,6 +86,9 @@ export const login = async (
       avatarUrl: user.avatarUrl,
       role: user.role,
       accessToken,
+      // In production the HttpOnly cookie is inaccessible to JS across origins,
+      // so we also return the refresh token in the body for the client to store.
+      ...(isProduction && { refreshToken }),
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     });
@@ -106,6 +111,41 @@ export const getNewRefreshToken = async (
         STATUS_CODE.UNAUTHORIZED,
       );
     }
+
+    const decoded = await AuthService.verifyRefreshToken(refreshToken);
+
+    const { id, email, role } = decoded;
+    const { accessToken: newAccessToken } = await AuthService.generateTokens(
+      id,
+      email,
+      role,
+    );
+
+    return sendResponse(res, 'Access Token is refreshed', STATUS_CODE.OK, {
+      accessToken: newAccessToken,
+    });
+  } catch (error) {
+    return sendResponse(
+      res,
+      'Invalid or expired refresh token',
+      STATUS_CODE.UNAUTHORIZED,
+    );
+  }
+};
+
+// Reads the refresh token from the request BODY (not cookie).
+// Used by the /refresh-prod endpoint for cross-origin production deployments
+// where the HttpOnly cookie is blocked by same-site/cross-origin restrictions.
+export const getNewRefreshTokenFromBody = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    // Validated by zodValidate middleware (refreshTokenSchema on body)
+    const { refresh_token: refreshToken } = req.body as {
+      refresh_token: string;
+    };
 
     const decoded = await AuthService.verifyRefreshToken(refreshToken);
 

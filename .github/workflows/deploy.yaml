@@ -1,0 +1,390 @@
+name: Deploy to AWS EC2
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Triggers
+# ─────────────────────────────────────────────────────────────────────────────
+on:
+  push:
+    branches:
+      - main # auto-deploy on every push to main
+
+  workflow_dispatch: # allow manual runs from the GitHub Actions UI
+    inputs:
+      skip_lint:
+        description: 'Skip lint & type checks (emergency deploy only)'
+        required: false
+        default: false
+        type: boolean
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Global environment variables (non-secret, reusable across jobs)
+# ─────────────────────────────────────────────────────────────────────────────
+env:
+  NODE_VERSION: '22'
+  PM2_APP_NAME: 'node-footwear-backend'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Jobs
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 1 — Build
+  #   Runs entirely on a GitHub-hosted runner (no EC2 cost).
+  #   Produces a deployment artifact containing:
+  #     • backend/dist/   — compiled TypeScript output
+  #     • backend/prisma/ — schema + migration files (for migrate:deploy on EC2)
+  #     • backend/package.json + package-lock.json + ecosystem.config.cjs
+  #     • frontend/dist/  — Vite static build (served by Nginx)
+  #   node_modules are intentionally excluded; they are installed fresh on EC2.
+  # ═══════════════════════════════════════════════════════════════════════════
+  build:
+    name: Build — Backend & Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Backend ────────────────────────────────────────────────────────────
+      - name: Setup Node.js (backend)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Lint backend
+        if: ${{ !inputs.skip_lint }}
+        working-directory: backend
+        run: npm run lint
+
+      # prisma generate reads schema.prisma and produces the typed client into
+      # src/generated/prisma/. No real DB connection is needed for this step.
+      # The DATABASE_URL placeholder satisfies any Prisma version that validates
+      # the env var at generate time without actually connecting.
+      - name: Generate Prisma client
+        working-directory: backend
+        run: npm run generate
+        env:
+          # DATABASE_URL: postgresql://ci:ci@localhost:5432/placeholder
+          DATABASE_URL: postgresql://postgres:prince@localhost:5432/userDB
+
+      # Compile TypeScript + resolve path aliases (tsc-alias).
+      # Intentionally NOT running migrate:deploy here — there is no real DB
+      # in the GitHub runner. Migrations run on EC2 against the live DB.
+      - name: Compile backend TypeScript
+        working-directory: backend
+        run: npm run clean && npx tsc && npx tsc-alias
+
+      # ── Frontend ───────────────────────────────────────────────────────────
+      - name: Setup Node.js (frontend)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint frontend
+        if: ${{ !inputs.skip_lint }}
+        working-directory: frontend
+        run: npm run lint
+
+      # If your frontend uses VITE_* public env vars, add them as GitHub
+      # secrets and reference them here so the values are baked into the bundle.
+      - name: Build frontend (Vite)
+        working-directory: frontend
+        run: npm run build
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+
+      # ── Package deployment artifact ────────────────────────────────────────
+      - name: Assemble deployment package
+        run: |
+          mkdir -p artifact/backend artifact/frontend
+
+          # Backend: compiled JS + Prisma schema/migrations + npm manifests
+          cp -r backend/dist                   artifact/backend/dist
+          cp -r backend/prisma                 artifact/backend/prisma
+          cp    backend/package.json           artifact/backend/package.json
+          cp    backend/package-lock.json      artifact/backend/package-lock.json
+          cp    backend/ecosystem.config.cjs   artifact/backend/ecosystem.config.cjs
+
+          # Frontend: only the static Vite output (Nginx serves this directory)
+          cp -r frontend/dist                  artifact/frontend/dist
+
+          tar -czf deployment.tar.gz -C artifact .
+          echo "Artifact size: $(du -sh deployment.tar.gz | cut -f1)"
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-package
+          path: deployment.tar.gz
+          retention-days: 1 # keep for 1 day; not needed after deploy
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 2 — Deploy
+  #   Downloads the artifact, copies it to EC2, and runs the deploy script.
+  #   Runs only after the build job succeeds.
+  #   Uses GitHub "production" environment for optional approval gates.
+  # ═══════════════════════════════════════════════════════════════════════════
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production
+
+    steps:
+      - name: Download deployment artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-package
+
+      # ── Setup SSH ──────────────────────────────────────────────────────────
+      # Write the private key to disk (600), add the host fingerprint to
+      # known_hosts so StrictHostKeyChecking passes without prompting.
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "SSH configured."
+
+      # ── Transfer artifact ──────────────────────────────────────────────────
+      - name: Transfer deployment package to EC2
+        run: |
+          scp -i ~/.ssh/deploy_key \
+            deployment.tar.gz \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/node-footwear-deploy.tar.gz"
+          echo "Package transferred."
+
+      # ── Run deploy script on EC2 ───────────────────────────────────────────
+      # GitHub Actions evaluates ${{ }} expressions before handing the script
+      # to the shell, so secret values are safely substituted even inside
+      # single-quoted heredocs (single quotes only prevent local shell expansion).
+      - name: Deploy on EC2
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << 'ENDSSH'
+
+          set -euo pipefail
+
+          # ── Variables ──────────────────────────────────────────────────
+          PROJECT_DIR="${{ secrets.EC2_PROJECT_PATH }}"
+          BACKEND_DIR="$PROJECT_DIR/backend"
+          FRONTEND_DIR="$PROJECT_DIR/frontend"
+          BACKUP_DIR="$PROJECT_DIR/.backups"
+          PM2_APP="${{ env.PM2_APP_NAME }}"
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+          echo ""
+          echo "╔══════════════════════════════════════════════╗"
+          echo "║     Node Footwear — Production Deploy        ║"
+          echo "║     Timestamp : $TIMESTAMP          ║"
+          echo "╚══════════════════════════════════════════════╝"
+
+          # ─────────────────────────────────────────────────
+          # STEP 1 — Backup current dist (rollback safety net)
+          # ─────────────────────────────────────────────────
+          echo ""
+          echo "▶ [1/5] Creating backup..."
+          mkdir -p "$BACKUP_DIR"
+
+          if [ -d "$BACKEND_DIR/dist" ]; then
+            tar -czf "$BACKUP_DIR/backup_${TIMESTAMP}.tar.gz" \
+              -C "$PROJECT_DIR" \
+              backend/dist \
+              backend/package.json \
+              backend/package-lock.json \
+              backend/ecosystem.config.cjs \
+              2>/dev/null || true
+
+            # Retain only the 5 most recent backups to save disk space
+            ls -t "$BACKUP_DIR"/backup_*.tar.gz 2>/dev/null \
+              | tail -n +6 \
+              | xargs -r rm --
+
+            echo "  ✓ Backup created: backup_${TIMESTAMP}.tar.gz"
+            echo "  ✓ Old backups pruned (keeping last 5)."
+          else
+            echo "  ℹ No existing dist — skipping backup (first deploy?)."
+          fi
+
+          # ─────────────────────────────────────────────────
+          # STEP 2 — Extract deployment package
+          # ─────────────────────────────────────────────────
+          echo ""
+          echo "▶ [2/5] Extracting deployment package..."
+          mkdir -p "$BACKEND_DIR" "$FRONTEND_DIR"
+          tar --overwrite -xzf /tmp/node-footwear-deploy.tar.gz -C "$PROJECT_DIR"
+          rm -f /tmp/node-footwear-deploy.tar.gz
+          echo "  ✓ Extraction complete."
+
+          # ─────────────────────────────────────────────────
+          # STEP 3 — Install deps & run Prisma migrations
+          # ─────────────────────────────────────────────────
+          # We run full `npm ci` (not --omit=dev) because the `prisma` CLI is
+          # a devDependency and is required by `prisma migrate deploy`.
+          # After migrations, devDependencies are pruned to keep the server lean.
+          echo ""
+          echo "▶ [3/5] Installing dependencies & running migrations..."
+          cd "$BACKEND_DIR"
+
+          npm ci
+          echo "  ✓ All dependencies installed."
+
+          # DATABASE_URL must be set in the EC2 environment beforehand.
+          # See deployment instructions for how to configure this.
+          npx prisma migrate deploy
+          echo "  ✓ Database migrations applied."
+
+          # Prune devDependencies — production server only needs runtime deps
+          npm prune --omit=dev
+          echo "  ✓ DevDependencies pruned."
+
+          # ─────────────────────────────────────────────────
+          # STEP 4 — Zero-downtime PM2 reload
+          # ─────────────────────────────────────────────────
+          echo ""
+          echo "▶ [4/5] Reloading PM2 ($PM2_APP)..."
+
+          if pm2 describe "$PM2_APP" &>/dev/null; then
+            # `pm2 reload` performs a zero-downtime restart (keeps old process
+            # alive until the new one is ready, then gracefully shuts the old one)
+            pm2 reload ecosystem.config.cjs --update-env
+            echo "  ✓ PM2 zero-downtime reload complete."
+          else
+            # First-time startup
+            pm2 start ecosystem.config.cjs --env production
+            echo "  ✓ PM2 process started (first deploy)."
+          fi
+
+          pm2 save
+          echo "  ✓ PM2 process list saved."
+
+          # ─────────────────────────────────────────────────
+          # STEP 5 — Reload Nginx
+          # ─────────────────────────────────────────────────
+          echo ""
+          echo "▶ [5/5] Reloading Nginx..."
+          sudo systemctl reload nginx
+          echo "  ✓ Nginx reloaded — frontend is live."
+
+          echo ""
+          echo "╔══════════════════════════════════════════════╗"
+          echo "║        Deployment Complete!                  ║"
+          echo "╚══════════════════════════════════════════════╝"
+
+          ENDSSH
+
+      # ── Health check ───────────────────────────────────────────────────────
+      # Verifies the app is responding after deployment. Set HEALTH_CHECK_URL
+      # as a secret if you have a dedicated /health endpoint (recommended).
+      # Falls back to hitting the EC2 host root via HTTP.
+      - name: Verify deployment (health check)
+        run: |
+          HEALTH_URL="${{ secrets.HEALTH_CHECK_URL }}"
+          if [ -z "$HEALTH_URL" ]; then
+            HEALTH_URL="http://${{ secrets.EC2_HOST }}"
+          fi
+
+          echo "Target URL : $HEALTH_URL"
+          echo "Waiting 15 seconds for PM2 to stabilise..."
+          sleep 15
+
+          MAX_ATTEMPTS=3
+          ATTEMPT=0
+
+          until [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Health check attempt $ATTEMPT / $MAX_ATTEMPTS..."
+
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 15 \
+              --retry 0 \
+              "$HEALTH_URL" 2>/dev/null || echo "000")
+
+            if [[ "$STATUS" =~ ^(200|301|302)$ ]]; then
+              echo "✅ Application is healthy — HTTP $STATUS"
+              exit 0
+            fi
+
+            echo "   HTTP $STATUS received."
+            if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
+              echo "   Retrying in 10 seconds..."
+              sleep 10
+            fi
+          done
+
+          echo "❌ Health check failed after $MAX_ATTEMPTS attempts."
+          echo "   SSH into EC2 and run: pm2 logs ${{ env.PM2_APP_NAME }}"
+          exit 1
+
+      # ── Rollback on failure ────────────────────────────────────────────────
+      # Triggered automatically when any prior step in this job fails.
+      # Restores the most recent backup, reinstalls runtime deps, and reloads.
+      - name: Rollback to previous version
+        if: failure()
+        run: |
+          echo "🔄 Rollback triggered — restoring previous version..."
+
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << 'ENDSSH'
+
+          set -euo pipefail
+
+          PROJECT_DIR="${{ secrets.EC2_PROJECT_PATH }}"
+          BACKUP_DIR="$PROJECT_DIR/.backups"
+          PM2_APP="${{ env.PM2_APP_NAME }}"
+
+          echo ""
+          echo "╔══════════════════════════════════════════════╗"
+          echo "║         Rollback Initiated                   ║"
+          echo "╚══════════════════════════════════════════════╝"
+
+          LATEST_BACKUP=$(ls -t "$BACKUP_DIR"/backup_*.tar.gz 2>/dev/null | head -1 || true)
+
+          if [ -n "$LATEST_BACKUP" ]; then
+            echo "  Restoring from: $(basename "$LATEST_BACKUP")"
+            tar --overwrite -xzf "$LATEST_BACKUP" -C "$PROJECT_DIR"
+
+            cd "$PROJECT_DIR/backend"
+            npm ci --omit=dev
+
+            # Reload or start PM2 with the restored dist
+            if pm2 describe "$PM2_APP" &>/dev/null; then
+              pm2 reload ecosystem.config.cjs --update-env
+            else
+              pm2 start ecosystem.config.cjs --env production
+            fi
+            pm2 save
+            sudo systemctl reload nginx
+
+            echo "✅ Rollback complete — previous version is now live."
+            echo "   Review the deployment logs and fix the issue before re-deploying."
+          else
+            echo "⚠️  No backup found — automatic rollback is not possible."
+            echo "   Manual intervention required."
+            echo "   Useful commands:"
+            echo "     pm2 logs $PM2_APP"
+            echo "     pm2 status"
+            exit 1
+          fi
+
+          ENDSSH
+
+      # ── Cleanup (always runs, even on failure) ─────────────────────────────
+      - name: Cleanup SSH key
+        if: always()
+        run: |
+          rm -f ~/.ssh/deploy_key
+          echo "SSH key removed."

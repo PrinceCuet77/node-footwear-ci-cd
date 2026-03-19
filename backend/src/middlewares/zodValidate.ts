@@ -27,6 +27,9 @@ export function validate(
     }
 
     const result = schema.safeParse(data);
+    
+    console.log('🚀 ~ validate ~ req.cookies:', req.cookies);
+    console.log('🚀 ~ validate ~ result:', result)
 
     if (!result.success) {
       const errors = result.error.errors.map((e) => ({

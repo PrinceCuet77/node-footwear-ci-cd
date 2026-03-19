@@ -63,20 +63,16 @@ export const generateTokens = async (
 export const getRefreshTokenCookieOptions = (
   isLogout = false,
 ): CookieOptions => {
-  if (isLogout) {
-    return {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'strict' as const,
-      maxAge: 0,
-    };
-  }
-  return {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const base: CookieOptions = {
     httpOnly: true,
-    secure: true,
-    sameSite: 'strict' as const,
-    maxAge: REFRESH_TOKEN_COOKIE_MAX_AGE,
+    secure: isProduction,
+    sameSite: isProduction ? ('none' as const) : ('lax' as const),
   };
+  if (isLogout) {
+    return { ...base, maxAge: 0 };
+  }
+  return { ...base, maxAge: REFRESH_TOKEN_COOKIE_MAX_AGE };
 };
 
 export const verifyRefreshToken = async (refreshToken: string) => {

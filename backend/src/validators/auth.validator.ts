@@ -30,7 +30,7 @@ export const loginSchema = z.object({
 });
 
 export const refreshTokenSchema = z.object({
-  accessToken: z.string().min(1),
+  refresh_token: z.string().min(1),
 });
 
 export const logoutSchema = z.object({

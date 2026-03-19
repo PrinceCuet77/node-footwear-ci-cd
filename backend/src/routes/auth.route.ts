@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getNewRefreshToken,
+  getNewRefreshTokenFromBody,
   login,
   logout,
   register,
@@ -13,44 +14,25 @@ import {
   registerSchema,
 } from '@validators/auth.validator';
 import { authRateLimiter } from '@middlewares/rateLimiter.middleware';
-// import { requireLogin } from '@middlewares/auth.middleware';
 
 const router = Router();
 
 router.post('/register', validate(registerSchema), register);
 router.post('/login', authRateLimiter, validate(loginSchema), login);
-// router.post(
-//   '/forgot-password',
-//   authRateLimiter,
-//   validate(forgotPasswordSchema),
-//   forgotPassword,
-// );
-// router.post(
-//   '/verify-token',
-//   authRateLimiter,
-//   validate(verifyTokenSchema),
-//   verifyToken,
-// );
-// router.post(
-//   '/reset-password',
-//   authRateLimiter,
-//   validate(resetPasswordSchema),
-//   resetPassword,
-// );
-// router.post(
-//   '/login-microsoft',
-//   authRateLimiter,
-//   validate(microsoftLoginSchema),
-//   microsoftLogin,
-// );
 router.post(
   '/refresh',
   validate(refreshTokenSchema, 'cookies'),
   getNewRefreshToken,
 );
 
+// Production refresh: token arrives in the request body (not an HttpOnly cookie)
+router.post(
+  '/refresh-prod',
+  validate(refreshTokenSchema),
+  getNewRefreshTokenFromBody,
+);
+
 router.use(verifyToken);
 router.get('/logout', logout);
-// router.post('/change-password', validate(changePasswordSchema), changePassword);
 
 export default router;

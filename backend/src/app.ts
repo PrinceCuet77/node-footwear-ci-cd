@@ -8,28 +8,25 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { STATUS_CODE } from '@constants/statusCode';
 import errorHandler from '@middlewares/errorHandler';
-import path from 'path';
+import { WHITELISTED_IPS } from '@config/whitelistedIps';
 
 const app = express();
 app.use(express.json({ limit: '3mb' }));
 app.use(express.urlencoded({ extended: true, limit: '3mb' }));
 
-// serve static files from the public directory
-// app.use('/public', express.static(path.join(__dirname, 'public')));
-
-// app.use(
-//   cors({
-//     origin: (origin, callback) => {
-//       if (!origin || WHITELISTED_IPS.cors_origins.includes(origin)) {
-//         callback(null, true);
-//       } else {
-//         callback(new Error('Not allowed by CORS'));
-//       }
-//     },
-//     credentials: true,
-//     exposedHeaders: ['content-disposition'],
-//   }),
-// );
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || WHITELISTED_IPS.cors_origins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true,
+    exposedHeaders: ['content-disposition'],
+  }),
+);
 app.use(cookieParser());
 app.set('trust proxy', 1);
 
