@@ -20,7 +20,7 @@ on:
 # Global environment variables (non-secret, reusable across jobs)
 # ─────────────────────────────────────────────────────────────────────────────
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '20'
   PM2_APP_NAME: 'node-footwear-backend'
 
 # ─────────────────────────────────────────────────────────────────────────────
